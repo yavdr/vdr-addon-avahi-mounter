@@ -12,6 +12,7 @@ import threading
 import time
 import os
 import sys
+import signal
 import subprocess
 import avahi
 import gobject
@@ -23,6 +24,7 @@ import ConfigParser
 from syslog import *
 from dbus import DBusException
 from dbus.mainloop.glib import DBusGMainLoop
+from contextlib import closing
 
 __all__ = ["ZeroconfBrowser"]
 
@@ -44,6 +46,18 @@ class ZeroconfBrowser(object):
         self.lock = threading.Lock()
         self.mounts = {}
         syslog("initialized zeroconf browser on %s" % self.localhost)
+
+    def close(self):
+        syslog("shutting down avahi-mounter")
+        allMounts = self.mounts.copy()
+        for name in allMounts:
+            with self.lock:
+                mount = self.mounts.get(name, None)
+                if mount is not None:
+                   syslog("umounting %s at shutdown" % mount.local)
+                   mount.unuse()
+                   del self.mounts[name]
+
 
     def __call__(self):
         if self.local_loop:
@@ -112,9 +126,8 @@ class ZeroconfBrowser(object):
             if mount is not None:
                 mount.unuse()
                 del self.mounts[name]
-                #syslog("Service removed: %s" % (name))
     def allfornow(self):
-        syslog("allfornow")
+        None
 
 class Mount:
     def __init__(self, host, txt):
@@ -160,24 +173,26 @@ class Mount:
                 syslog("unable to make dir: %s" % strerror)
                 return
         try:
-            subprocess.call(['/bin/mount',
+            mountshell = subprocess.Popen(['/bin/mount',
                      '-t', 'nfs',
                      self.remote,
                      self.local])
+            mountshell.wait()
         except OSError as (errno, strerror):
-            syslog("unable to mount: %s" % strerror)
-            return
+                syslog("unable to mount: %s" % strerror)
+                return
         if self.subtype == "vdr":
             self.notify()
 
     def notify(self):
-        time.sleep(3)
         os.utime("/srv/vdr/video.00/.update", None)
 
     def unuse(self):
-        subprocess.Popen(["umount", self.local])
+        umount = subprocess.Popen(["umount", self.local])
+        umount.wait()
         os.rmdir(self.local)
-        self.notify()
+        if self.subtype == "vdr":
+            self.notify()
 
 class DvbDevice:
     def __init__(self, host, address, txt):
@@ -313,6 +328,9 @@ class Config:
             syslog("request for non-existing option: [%s].%s" % (section, key))
 
 
+def signal_handler(signal, frame):
+        sys.exit(0)
+
 # initialize gettext
 gettext.install('vdr-addon-avahi-mounter', '/usr/share/locale', unicode=1)
 
@@ -328,7 +346,13 @@ staticMounter()
 
 # start main loop
 browser = ZeroconfBrowser()
-browser.browse('_nfs._tcp')
-browser.browse('_dvb._tcp')
-browser()
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
+
+with closing(browser) as avahiMounter:
+    avahiMounter.browse('_nfs._tcp')
+    avahiMounter.browse('_dvb._tcp')
+    avahiMounter()
 
