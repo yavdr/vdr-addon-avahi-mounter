@@ -185,7 +185,10 @@ class Mount:
             self.notify()
 
     def notify(self):
-        os.utime("/srv/vdr/video.00/.update", None)
+        try:
+            os.utime("/srv/vdr/video.00/.update", None)
+        except:
+            open("/srv/vdr/video.00/.update", 'a').close()
 
     def unuse(self):
         umount = subprocess.Popen(["umount", self.local])
