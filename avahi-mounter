@@ -62,7 +62,6 @@ class ZeroconfBrowser(object):
     def __call__(self):
         if self.local_loop:
             gobject.MainLoop().run()
-        syslog("main loop started")
 
     def browse(self,
            type,
@@ -70,7 +69,6 @@ class ZeroconfBrowser(object):
            protocol=avahi.PROTO_UNSPEC,
            domain='local',
            flags=dbus.UInt32(0)):
-        syslog("browse")
         with self.lock:
             sbrowser = dbus.Interface(
                 self.bus.get_object(
@@ -88,11 +86,9 @@ class ZeroconfBrowser(object):
             sbrowser.connect_to_signal("ItemRemove", self.removal)
             sbrowser.connect_to_signal("AllForNow", self.allfornow)
             sbrowser.connect_to_signal("Failure", self.browse_error)
-            syslog("connected_to_signals")
 
     def resolve(self, interface, protocol, name,
                 type, domain, aprotocol, flags=dbus.UInt32(0)):
-        #syslog("Service found async:", interface, protocol, name, type, domain, flags)
         with self.lock:
             self.server.ResolveService(
                 interface, protocol, name,
@@ -102,17 +98,27 @@ class ZeroconfBrowser(object):
     def resolved(self, interface, protocol, name, type,
                  domain, host, aprotocol, address,
                  port, txt, flags):
+
         syslog("Resolved type %s on %s" % (type, host))
-        if self.localhost == host.split(".")[0]: return
-        if type == '_nfs._tcp':
-            mount = Mount(host, txt)
-            mount.use()
-            self.mounts[name] = mount
+
+        if self.localhost == host.split(".")[0]:
+            return
+
+        if type == '_nfs._tcp':     # new thread and catch any exception one broken share doesnt matter
+            try:
+                mount = Mount(host, txt)
+                mount.use()
+                self.mounts[name] = mount
+            except Exception, error:
+                syslog("ERROR: %s" % error)
         elif type == '_dvb._tcp':
-            device = DvbDevice(host, address, txt)
-            device.use()
-            self.mounts[name] = device
-        syslog("Service resolved: %s nach %s" % (host, name))
+            try:
+                device = DvbDevice(host, address, txt)
+                device.use()
+                self.mounts[name] = device
+            except Exception, error:
+                syslog("ERROR: %s" % error)
+        syslog("Service resolved: %s to %s" % (host, name))
         
     def resolve_error(self, exception):
         syslog("Resolution error:", exception)
@@ -124,16 +130,20 @@ class ZeroconfBrowser(object):
         with self.lock:
             mount = self.mounts.get(name, None)
             if mount is not None:
-                mount.unuse()
-                del self.mounts[name]
+                try:
+                    mount.unuse()
+                    del self.mounts[name]
+                except Exception, error:
+                    syslog("ERROR: %s" % error )
     def allfornow(self):
         None
 
 class Mount:
     def __init__(self, host, txt):
-        syslog("Mount created")
         path = []
         subtype = []
+        category = []
+
         for t in txt:
             x = "".join((chr(c) for c in t))
             (key, value) = x.split("=")
@@ -141,8 +151,13 @@ class Mount:
                 path = value
             elif key == "subtype":
                 subtype = value
+            elif key == "category":
+                category = value
+
         self.subtype = subtype
+        self.category = category
         self.remote = host + ":" + path
+
         if subtype == "vdr":
             self.local = config.vdr + '/'
         elif subtype == "video":
@@ -153,25 +168,33 @@ class Mount:
             self.local = config.picture
         else:
             self.local = config.misc
-        self.local += host.split('.')[0]
-        syslog("media is %s for %s:%s" % (self.local, host, path))
+
+        if not category:
+            self.local += host.split('.')[0] + '/'
+        elif subtype == "vdr" and "video." in category:
+            self.local = "/srv/vdr/" + category
+        else:
+            self.local += host.split('.')[0] + '/' + category
+        syslog("media is mounted on %s for server %s and share %s" % (self.local, host, path))
 
     def use(self):
-        syslog("create")
         p1 = subprocess.Popen(["mount"], stdout=subprocess.PIPE)
+
         mounts = subprocess.Popen(["grep", "type nfs"],
                       stdin=p1.stdout,
                       stdout=subprocess.PIPE).communicate()[0]
+
         for path in mounts.split('\n'):
-            syslog("compare %s" % path)
-            if len(path) != 0 and path.split()[2] == self.local:
+            if path and path.split()[2] == self.local:
                 return
+
         try:
             os.makedirs(self.local)
         except OSError as (errno, strerror):
             if errno != 17:
-                syslog("unable to make dir: %s" % strerror)
+                syslog("Unable to create directory: %s" % strerror)
                 return
+
         try:
             mountshell = subprocess.Popen(['/bin/mount',
                      '-t', 'nfs',
@@ -181,21 +204,33 @@ class Mount:
         except OSError as (errno, strerror):
                 syslog("unable to mount: %s" % strerror)
                 return
+
         if self.subtype == "vdr":
             self.notify()
 
     def notify(self):
         try:
-            os.utime("/srv/vdr/video.00/.update", None)
+            bus = dbus.SystemBus()
+            dbus2vdr = bus.get_object('de.tvdr.vdr', '/Recording') 
+            dbus2vdr.Update(dbus_interface = 'de.tvdr.vdr.recording')
         except:
-            open("/srv/vdr/video.00/.update", 'a').close()
+            try:
+                syslog("dbus unavailable, fallback to update /srv/vdr/video.00/.update")
+                os.utime("/srv/vdr/video.00/.update", None)
+            except:
+                syslog("Create /srv/vdr/video.00/.update")
+                open("/srv/vdr/video.00/.update", 'a').close()
+                os.chown("/srv/vdr/video.00/.update",vdr)
 
     def unuse(self):
         umount = subprocess.Popen(["umount", self.local])
         umount.wait()
-        os.rmdir(self.local)
         if self.subtype == "vdr":
+            if not self.category:
+                os.rmdir(self.local)
             self.notify()
+        else:
+            os.rmdir(self.local)
 
 class DvbDevice:
     def __init__(self, host, address, txt):
@@ -282,9 +317,11 @@ class Config:
         self.config.readfp(open('/etc/default/avahi-mounter'))
         self.config.read(['/var/lib/vdr/.avahi-mounter',
                   os.path.expanduser('~vdr/.avahi-mounter')])
+
         if self.config.getboolean("base", "enabled") is not True:
             syslog("avahi-mounter is disabled")
             sys.exit()
+
         # preset some values
         self.vdr = self.config.get('dir','vdr','/srv/vdr/video.00')
         self.media = self.config.get('dir','media','/media')
