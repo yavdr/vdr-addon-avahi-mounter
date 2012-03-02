@@ -131,6 +131,7 @@ class ZeroconfBrowser(object):
             mount = self.mounts.get(name, None)
             if mount is not None:
                 try:
+                    syslog("umounting %s on server logout" % mount.local)
                     mount.unuse()
                     del self.mounts[name]
                 except Exception, error:
@@ -198,6 +199,7 @@ class Mount:
         try:
             mountshell = subprocess.Popen(['/bin/mount',
                      '-t', 'nfs',
+                     '-o', 'soft,intr',
                      self.remote,
                      self.local])
             mountshell.wait()
