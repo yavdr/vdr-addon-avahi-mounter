@@ -1,0 +1,43 @@
+#!/bin/sh
+
+writeAvahiService() {
+  MOUNT=$1
+  TYPE=$2
+  FILE=`echo $1 | sed "s/\//_/g"`
+  cat <<EOF > /etc/avahi/services/yaNFS$FILE.$TYPE.service
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<service-group>
+<name replace-wildcards="yes">$TYPE at $MOUNT on %h</name> ## Name
+<service>
+       <type>_nfs._tcp</type>
+       <port>2049</port>
+       <txt-record>path=$MOUNT</txt-record> ## path to shared Folder
+       <txt-record>subtype=$TYPE</txt-record> ## subtype
+</service>
+</service-group>
+EOF
+}
+
+rm -f /etc/avahi/services/yaNFS_*.service
+
+for MOUNT in $(showmount -e | grep "^\/" | cut -f1 -d" ") ; do
+  echo -n "share $MOUNT found:"
+  if [ `find $MOUNT -xdev -type d -name '*.rec' 2>/dev/null | wc -l` -gt 0 ] ; then
+    echo -n " vdr"
+    writeAvahiService "$MOUNT" vdr
+  fi
+  if [ `find $MOUNT -xdev -type f -name '*.png' -o -name '*.jpg' 2>/dev/null | wc -l` -gt 0 ] ; then
+    echo -n " pics"
+    writeAvahiService "$MOUNT" picture
+  fi
+  if [ `find $MOUNT -xdev -type f -name '*.avi' -o -name '*.mkv' 2>/dev/null | wc -l` -gt 0 ] ; then
+    echo -n " video"
+    writeAvahiService "$MOUNT" video
+  fi
+  if [ `find $MOUNT -xdev -type f -name '*.mp3' 2>/dev/null | wc -l` -gt 0 ] ; then
+    echo -n " audio"
+    writeAvahiService "$MOUNT" audio
+  fi
+  echo ""
+done
