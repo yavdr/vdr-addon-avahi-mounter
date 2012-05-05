@@ -327,7 +327,6 @@ class Config:
         # preset some values
         self.vdr = self.config.get('dir','vdr','/srv/vdr/video.00')
         self.media = self.config.get('dir','media','/media')
-        self.record  = self.__getDir(_("Record")) 
         self.video   = self.__getDir(_("Video"))
         self.audio   = self.__getDir(_("Music"))
         self.picture = self.__getDir(_("Picture"))
