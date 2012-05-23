@@ -250,6 +250,7 @@ class DvbDevice:
         self.__address = address
         self.__device = device
         self.__serial = serial
+        self.local = address + ":" + device
 
         syslog("dvbdevice on %s/%s:%s (serial %s)" % (host, address, device, serial))
 
