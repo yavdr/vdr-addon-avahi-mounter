@@ -213,7 +213,7 @@ class Mount:
     def notify(self):
         try:
             bus = dbus.SystemBus()
-            dbus2vdr = bus.get_object('de.tvdr.vdr', '/Recording') 
+            dbus2vdr = bus.get_object('de.tvdr.vdr', '/Recordings') 
             dbus2vdr.Update(dbus_interface = 'de.tvdr.vdr.recording')
         except:
             try:
