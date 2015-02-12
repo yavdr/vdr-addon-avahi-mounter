@@ -1,3 +1,9 @@
+vdr-addon-avahi-mounter (0.0.1-0yavdr1) precise; urgency=medium
+
+  * rebuild
+
+ -- Lars Hanisch <dvb@flensrocker.de>  Thu, 12 Feb 2015 20:47:49 +0100
+
 vdr-addon-avahi-mounter (0.0.1-0yavdr0) lucid; urgency=low
 
   * Initial release
